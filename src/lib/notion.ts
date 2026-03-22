@@ -96,3 +96,14 @@ export async function getAllPages(): Promise<NotionPage[]> {
 
   return pages;
 }
+
+export async function* getPageStream(): AsyncGenerator<NotionPage> {
+  const databaseId = process.env.NOTION_DATABASE_ID!;
+  const dbPages = await getAllDatabasePages(databaseId);
+
+  for (const p of dbPages) {
+    const title = getPageTitle(p);
+    const blocks = await getAllBlockChildren(p.id);
+    yield { id: p.id, title, blocks };
+  }
+}

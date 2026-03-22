@@ -11,17 +11,57 @@ export default function Home() {
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch("/api/notion")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.error) {
-          setError(data.error);
-        } else {
-          setPages(data.pages);
+    async function streamPages() {
+      try {
+        const res = await fetch("/api/notion");
+
+        if (!res.ok || !res.body) {
+          const data = await res.json();
+          setError(data.error || "Failed to fetch pages");
+          setLoading(false);
+          return;
         }
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const parsed = JSON.parse(line);
+            if (parsed.error) {
+              setError(parsed.error);
+            } else {
+              setPages((prev) => [...prev, parsed]);
+            }
+          }
+        }
+
+        // Handle any remaining data in buffer
+        if (buffer.trim()) {
+          const parsed = JSON.parse(buffer);
+          if (parsed.error) {
+            setError(parsed.error);
+          } else {
+            setPages((prev) => [...prev, parsed]);
+          }
+        }
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Unknown error");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    streamPages();
   }, []);
 
   const handleCopy = async () => {
@@ -65,19 +105,7 @@ export default function Home() {
     selection?.addRange(range);
   };
 
-  if (loading) {
-    return (
-      <div className="loading">
-        <div className="spinner" />
-        <p>Fetching all pages from Notion...</p>
-        <p style={{ fontSize: 13, marginTop: 8 }}>
-          This may take a moment for large databases
-        </p>
-      </div>
-    );
-  }
-
-  if (error) {
+  if (error && pages.length === 0) {
     return (
       <div className="error-box">
         <h2>Error</h2>
@@ -95,13 +123,22 @@ export default function Home() {
     <>
       <div className="toolbar">
         <h1>Notion Print View</h1>
-        <span className="status">{pages.length} pages loaded</span>
+        <span className="status">
+          {pages.length} pages loaded{loading ? " (loading more...)" : ""}
+        </span>
         <button onClick={handleSelectAll}>Select All</button>
         <button onClick={handleCopy}>Copy All (Rich Text)</button>
         <button className="primary" onClick={handlePrint}>
           Print
         </button>
       </div>
+
+      {pages.length === 0 && loading && (
+        <div className="loading">
+          <div className="spinner" />
+          <p>Fetching pages from Notion...</p>
+        </div>
+      )}
 
       <div className="content" ref={contentRef}>
         {pages.map((page) => (
